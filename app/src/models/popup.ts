@@ -39,6 +39,7 @@ export enum PopupType {
   CreateRepository = 'CreateRepository',
   CloneRepository = 'CloneRepository',
   CreateBranch = 'CreateBranch',
+  CreateWorktree = 'CreateWorktree',
   SignIn = 'SignIn',
   About = 'About',
   InstallGit = 'InstallGit',
@@ -178,6 +179,12 @@ export type PopupDetail =
       repository: Repository
       initialName?: string
       targetCommit?: CommitOneLine
+    }
+  | {
+      type: PopupType.CreateWorktree
+      repository: Repository
+      initialBranchName?: string
+      initialPath?: string
     }
   | {
       type: PopupType.SignIn

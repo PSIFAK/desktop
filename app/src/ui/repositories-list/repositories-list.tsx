@@ -77,6 +77,7 @@ interface IRepositoriesListProps {
 }
 
 interface IRepositoriesListState {
+  readonly isRefreshingRepositoryStatuses: boolean
   readonly newRepositoryMenuExpanded: boolean
   readonly selectedItem: IRepositoryListItem | null
 }
@@ -147,6 +148,7 @@ export class RepositoriesList extends React.Component<
     super(props)
 
     this.state = {
+      isRefreshingRepositoryStatuses: false,
       newRepositoryMenuExpanded: false,
       selectedItem: null,
     }
@@ -362,16 +364,31 @@ export class RepositoriesList extends React.Component<
   }
 
   private renderPostFilter = () => {
+    const refreshTooltip = this.state.isRefreshingRepositoryStatuses
+      ? 'Refreshing repository statuses'
+      : 'Refresh repository statuses'
+
     return (
-      <Button
-        className="new-repository-button"
-        onClick={this.onNewRepositoryButtonClick}
-        ariaExpanded={this.state.newRepositoryMenuExpanded}
-        onKeyDown={this.onNewRepositoryButtonKeyDown}
-      >
-        Add
-        <Octicon symbol={octicons.triangleDown} />
-      </Button>
+      <div className="repository-list-actions">
+        <Button
+          className="refresh-repositories-button"
+          onClick={this.onRefreshRepositoryStatuses}
+          disabled={this.state.isRefreshingRepositoryStatuses}
+          ariaLabel={refreshTooltip}
+          tooltip={refreshTooltip}
+        >
+          <Octicon symbol={octicons.sync} />
+        </Button>
+        <Button
+          className="new-repository-button"
+          onClick={this.onNewRepositoryButtonClick}
+          ariaExpanded={this.state.newRepositoryMenuExpanded}
+          onKeyDown={this.onNewRepositoryButtonKeyDown}
+        >
+          Add
+          <Octicon symbol={octicons.triangleDown} />
+        </Button>
+      </div>
     )
   }
 
@@ -429,6 +446,20 @@ export class RepositoriesList extends React.Component<
     showContextualMenu(items).then(() => {
       this.setState({ newRepositoryMenuExpanded: false })
     })
+  }
+
+  private onRefreshRepositoryStatuses = async () => {
+    if (this.state.isRefreshingRepositoryStatuses) {
+      return
+    }
+
+    this.setState({ isRefreshingRepositoryStatuses: true })
+
+    try {
+      await this.props.dispatcher.refreshAllRepositoryIndicators()
+    } finally {
+      this.setState({ isRefreshingRepositoryStatuses: false })
+    }
   }
 
   private onCloneRepository = () => {

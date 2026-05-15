@@ -1,6 +1,8 @@
 import { git } from './core'
 import { Repository } from '../../models/repository'
 
+const CheckAttrBatchSize = 512
+
 /** Install the global LFS filters. */
 export async function installGlobalLFSFilters(force: boolean): Promise<void> {
   const args = ['lfs', 'install', '--skip-repo']
@@ -88,11 +90,33 @@ export async function filesNotTrackedByLFS(
 ): Promise<ReadonlyArray<string>> {
   const filesNotTrackedByGitLFS = new Array<string>()
 
-  for (const file of filePaths) {
-    const isTracked = await isTrackedByLFS(repository, file)
+  for (let i = 0; i < filePaths.length; i += CheckAttrBatchSize) {
+    const batch = filePaths.slice(i, i + CheckAttrBatchSize)
+    const { stdout } = await git(
+      ['check-attr', 'filter', '--', ...batch],
+      repository.path,
+      'checkAttrForLFSBatch'
+    )
 
-    if (!isTracked) {
-      filesNotTrackedByGitLFS.push(file)
+    const trackedFiles = new Set<string>()
+    for (const line of stdout.split(/\r?\n/)) {
+      const separator = ': filter: '
+      if (!line.endsWith('lfs')) {
+        continue
+      }
+
+      const separatorIndex = line.lastIndexOf(separator)
+      if (separatorIndex === -1) {
+        continue
+      }
+
+      trackedFiles.add(line.substring(0, separatorIndex))
+    }
+
+    for (const file of batch) {
+      if (!trackedFiles.has(file)) {
+        filesNotTrackedByGitLFS.push(file)
+      }
     }
   }
 

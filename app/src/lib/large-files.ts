@@ -5,6 +5,7 @@ import { stat } from 'fs/promises'
 import { join } from 'path'
 
 const ReceiveLimit = 100 * 1024 * 1024 // 100 MiB
+const FileStatConcurrency = 32
 
 /**
  * Retrieve paths of working directory files that are larger than a given Megabyte size.
@@ -19,24 +20,37 @@ export async function getLargeFilePaths(
   repository: Repository,
   workingDirectory: WorkingDirectoryStatus
 ) {
-  const fileNames = new Array<string>()
   const workingDirectoryFiles = workingDirectory.files
   const includedFiles = workingDirectoryFiles.filter(
     file => file.selection.getSelectionType() !== DiffSelectionType.None
   )
 
-  for (const file of includedFiles) {
-    const filePath = join(repository.path, file.path)
-    try {
-      const fileStatus = await stat(filePath)
-      const fileSizeBytes = fileStatus.size
-      if (fileSizeBytes > ReceiveLimit) {
-        fileNames.push(file.path)
+  const largeFiles = new Array<string>()
+  let nextIndex = 0
+
+  const collectLargeFiles = async () => {
+    while (nextIndex < includedFiles.length) {
+      const currentIndex = nextIndex++
+      const file = includedFiles[currentIndex]
+      const filePath = join(repository.path, file.path)
+
+      try {
+        const fileStatus = await stat(filePath)
+        if (fileStatus.size > ReceiveLimit) {
+          largeFiles.push(file.path)
+        }
+      } catch (error) {
+        log.debug(`Unable to get the file size for ${filePath}`, error)
       }
-    } catch (error) {
-      log.debug(`Unable to get the file size for ${filePath}`, error)
     }
   }
 
-  return fileNames
+  await Promise.all(
+    Array.from(
+      { length: Math.min(FileStatConcurrency, includedFiles.length) },
+      () => collectLargeFiles()
+    )
+  )
+
+  return largeFiles
 }

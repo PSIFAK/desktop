@@ -7,7 +7,6 @@ import frontMatter from 'front-matter'
 import * as os from 'os'
 import * as path from 'path'
 import { getPrintenvzPath } from 'printenvz'
-import { getProxyCommandPath } from 'process-proxy'
 import { externals } from '../app/webpack.common'
 
 interface IChooseALicense {
@@ -65,6 +64,20 @@ const entitlementsSuffix = isDevelopmentBuild ? '-dev' : ''
 const entitlementsPath = `${projectRoot}/script/entitlements${entitlementsSuffix}.plist`
 const extendInfoPath = `${projectRoot}/script/info.plist`
 const outRoot = path.join(projectRoot, 'out')
+
+function getProcessProxyCommandPath() {
+  const baseName = `process-proxy-${process.platform}-${process.arch}`
+  const executableName =
+    process.platform === 'win32' ? `${baseName}.exe` : baseName
+
+  return path.resolve(
+    projectRoot,
+    'node_modules',
+    'process-proxy',
+    'bin',
+    executableName
+  )
+}
 
 console.log(`Building for ${getChannel()}…`)
 
@@ -455,7 +468,7 @@ function copyDependencies() {
 
   console.log('  Copying process-proxy binary')
   cpSync(
-    getProxyCommandPath(),
+    getProcessProxyCommandPath(),
     path.resolve(
       outRoot,
       process.platform === 'win32' ? 'process-proxy.exe' : 'process-proxy'

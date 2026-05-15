@@ -328,9 +328,7 @@ export class FilterChangesList extends React.Component<
         return getCheckBoxValueFromIncludeAll(workingDirectory.includeAll)
       }
 
-      const files = workingDirectory.files.filter(f => filteredItems.has(f.id))
-
-      if (files.length === 0) {
+      if (filteredItems.size === 0) {
         // the current commit will be skipped in the rebase
         return CheckboxValue.Off
       }
@@ -338,25 +336,50 @@ export class FilterChangesList extends React.Component<
       if (rebaseConflictState !== null) {
         // untracked files will be skipped by the rebase, so we need to ensure that
         // the "Include All" checkbox matches this state
-        const onlyUntrackedFilesFound = files.every(
-          f => f.status.kind === AppFileStatusKind.Untracked
-        )
+        let hasTrackedFiles = false
+        let hasUntrackedFiles = false
 
-        if (onlyUntrackedFilesFound) {
+        for (const { change } of filteredItems.values()) {
+          if (change.status.kind === AppFileStatusKind.Untracked) {
+            hasUntrackedFiles = true
+          } else {
+            hasTrackedFiles = true
+          }
+
+          if (hasTrackedFiles && hasUntrackedFiles) {
+            break
+          }
+        }
+
+        if (!hasTrackedFiles) {
           return CheckboxValue.Off
         }
 
-        const onlyTrackedFilesFound = files.every(
-          f => f.status.kind !== AppFileStatusKind.Untracked
-        )
-
         // show "Mixed" if we have a mixture of tracked and untracked changes
-        return onlyTrackedFilesFound ? CheckboxValue.On : CheckboxValue.Mixed
+        return hasUntrackedFiles ? CheckboxValue.Mixed : CheckboxValue.On
       }
 
-      const filteredStatus = WorkingDirectoryStatus.fromFiles(files)
+      let allSelectedCount = 0
+      let noneSelectedCount = 0
 
-      return getCheckBoxValueFromIncludeAll(filteredStatus.includeAll)
+      for (const { change } of filteredItems.values()) {
+        const selectionType = change.selection.getSelectionType()
+        if (selectionType === DiffSelectionType.All) {
+          allSelectedCount++
+        } else if (selectionType === DiffSelectionType.None) {
+          noneSelectedCount++
+        }
+      }
+
+      if (allSelectedCount === filteredItems.size) {
+        return CheckboxValue.On
+      }
+
+      if (noneSelectedCount === filteredItems.size) {
+        return CheckboxValue.Off
+      }
+
+      return CheckboxValue.Mixed
     }
   )
 
@@ -1395,18 +1418,28 @@ export class FilterChangesList extends React.Component<
 
   private renderHiddenChangesWarning = () => {
     const { files } = this.props.workingDirectory
-    const filesSelected = files.filter(
-      f => f.selection.getSelectionType() !== DiffSelectionType.None
-    )
-
     if (
-      !isCommittingFileHiddenByFilter(
-        filesSelected.map(f => f.id),
-        this.state.filteredItems,
-        files.length,
-        this.props.fileListFilter
-      )
+      !hasActiveFilters(this.props.fileListFilter) ||
+      this.state.filteredItems.size === files.length
     ) {
+      return null
+    }
+
+    let selectedCount = 0
+    let hasHiddenSelectedFile = false
+
+    for (const file of files) {
+      if (file.selection.getSelectionType() === DiffSelectionType.None) {
+        continue
+      }
+
+      selectedCount++
+      if (!this.state.filteredItems.has(file.id)) {
+        hasHiddenSelectedFile = true
+      }
+    }
+
+    if (!hasHiddenSelectedFile) {
       return null
     }
 
@@ -1416,8 +1449,7 @@ export class FilterChangesList extends React.Component<
         <span className="sr-only">Warning:</span>
         <span>Hidden changes will be committed. </span>
         <LinkButton onClick={this.showFilesToBeCommitted}>
-          Adjust the filters to see all {formatNumber(filesSelected.length)}{' '}
-          changes
+          Adjust the filters to see all {formatNumber(selectedCount)} changes
         </LinkButton>
       </div>
     )

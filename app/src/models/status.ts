@@ -358,29 +358,121 @@ export class WorkingDirectoryStatus {
   public static fromFiles(
     files: ReadonlyArray<WorkingDirectoryFileChange>
   ): WorkingDirectoryStatus {
-    return new WorkingDirectoryStatus(files, getIncludeAllState(files))
+    const fileIxById = new Map<string, number>()
+    let allSelectedCount = 0
+    let noneSelectedCount = 0
+
+    files.forEach((f, ix) => {
+      fileIxById.set(f.id, ix)
+
+      switch (f.selection.getSelectionType()) {
+        case DiffSelectionType.All:
+          allSelectedCount++
+          break
+        case DiffSelectionType.None:
+          noneSelectedCount++
+          break
+      }
+    })
+
+    return new WorkingDirectoryStatus(
+      files,
+      getIncludeAllState(files.length, allSelectedCount, noneSelectedCount),
+      fileIxById,
+      allSelectedCount,
+      noneSelectedCount
+    )
   }
 
-  private readonly fileIxById = new Map<string, number>()
+  private constructor(
+    public readonly files: ReadonlyArray<WorkingDirectoryFileChange>,
+    public readonly includeAll: boolean | null,
+    private readonly fileIxById: ReadonlyMap<string, number>,
+    private readonly allSelectedCount: number,
+    private readonly noneSelectedCount: number
+  ) {}
+
   /**
    * @param files The list of changes in the repository's working directory.
    * @param includeAll Update the include checkbox state of the form.
    *                   NOTE: we need to track this separately to the file list selection
    *                         and perform two-way binding manually when this changes.
    */
-  private constructor(
-    public readonly files: ReadonlyArray<WorkingDirectoryFileChange>,
-    public readonly includeAll: boolean | null = true
-  ) {
-    files.forEach((f, ix) => this.fileIxById.set(f.id, ix))
+  public withIncludeAllFiles(includeAll: boolean): WorkingDirectoryStatus {
+    if (
+      (includeAll && this.allSelectedCount === this.files.length) ||
+      (!includeAll && this.noneSelectedCount === this.files.length)
+    ) {
+      return this
+    }
+
+    const newFiles = this.files.map(f => f.withIncludeAll(includeAll))
+    return WorkingDirectoryStatus.fromFiles(newFiles)
   }
 
   /**
-   * Update the include state of all files in the working directory
+   * Create a new status by replacing a subset of files while preserving the
+   * existing ordering and id index.
    */
-  public withIncludeAllFiles(includeAll: boolean): WorkingDirectoryStatus {
-    const newFiles = this.files.map(f => f.withIncludeAll(includeAll))
-    return new WorkingDirectoryStatus(newFiles, includeAll)
+  public withUpdatedFiles(
+    files: ReadonlyArray<WorkingDirectoryFileChange>
+  ): WorkingDirectoryStatus {
+    if (files.length === 0) {
+      return this
+    }
+
+    const updatedFiles = [...this.files]
+    let allSelectedCount = this.allSelectedCount
+    let noneSelectedCount = this.noneSelectedCount
+    let changed = false
+
+    for (const file of files) {
+      const ix = this.fileIxById.get(file.id)
+      if (ix === undefined) {
+        continue
+      }
+
+      const current = updatedFiles[ix]
+      if (current === file) {
+        continue
+      }
+
+      updatedFiles[ix] = file
+      changed = true
+
+      const previousType = current.selection.getSelectionType()
+      const nextType = file.selection.getSelectionType()
+
+      if (previousType !== nextType) {
+        if (previousType === DiffSelectionType.All) {
+          allSelectedCount--
+        } else if (previousType === DiffSelectionType.None) {
+          noneSelectedCount--
+        }
+
+        if (nextType === DiffSelectionType.All) {
+          allSelectedCount++
+        } else if (nextType === DiffSelectionType.None) {
+          noneSelectedCount++
+        }
+      }
+    }
+
+    if (!changed) {
+      return this
+    }
+
+    return new WorkingDirectoryStatus(
+      updatedFiles,
+      getIncludeAllState(
+        updatedFiles.length,
+        allSelectedCount,
+        noneSelectedCount
+      ),
+      this.fileIxById,
+      allSelectedCount,
+      noneSelectedCount
+    )
   }
 
   /** Find the file with the given ID. */
@@ -397,25 +489,21 @@ export class WorkingDirectoryStatus {
 }
 
 function getIncludeAllState(
-  files: ReadonlyArray<WorkingDirectoryFileChange>
+  fileCount: number,
+  allSelectedCount: number,
+  noneSelectedCount: number
 ): boolean | null {
-  if (!files.length) {
+  if (fileCount === 0) {
     return true
   }
 
-  const allSelected = files.every(
-    f => f.selection.getSelectionType() === DiffSelectionType.All
-  )
-  const noneSelected = files.every(
-    f => f.selection.getSelectionType() === DiffSelectionType.None
-  )
-
-  let includeAll: boolean | null = null
-  if (allSelected) {
-    includeAll = true
-  } else if (noneSelected) {
-    includeAll = false
+  if (allSelectedCount === fileCount) {
+    return true
   }
 
-  return includeAll
+  if (noneSelectedCount === fileCount) {
+    return false
+  }
+
+  return null
 }

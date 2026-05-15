@@ -22,6 +22,7 @@ import {
   PullRequest,
   PullRequestSuggestedNextAction,
 } from '../models/pull-request'
+import { IWorktree } from '../models/worktree'
 import { Author } from '../models/author'
 import { MergeTreeResult } from '../models/merge'
 import { ICommitMessage } from '../models/commit-message'
@@ -424,6 +425,7 @@ export interface IAppState {
 export enum FoldoutType {
   Repository,
   Branch,
+  Worktree,
   AppMenu,
   AddMenu,
   PushPull,
@@ -448,6 +450,7 @@ export type Foldout =
   | { type: FoldoutType.Repository }
   | { type: FoldoutType.AddMenu }
   | BranchFoldout
+  | { type: FoldoutType.Worktree }
   | AppMenuFoldout
   | { type: FoldoutType.PushPull }
 
@@ -551,6 +554,8 @@ export interface IRepositoryState {
 
   readonly branchesState: IBranchesState
 
+  readonly worktreesState: IWorktreesState
+
   /** The commits loaded, keyed by their full SHA. */
   readonly commitLookup: Map<string, Commit>
 
@@ -651,6 +656,12 @@ export type CommitOptions = Pick<
   IRepositoryState,
   'skipCommitHooks' | 'signOffCommits' | 'allowEmptyCommit'
 >
+
+export interface IWorktreesState {
+  readonly worktrees: ReadonlyArray<IWorktree>
+  readonly isLoadingWorktrees: boolean
+  readonly lastError: string | null
+}
 
 export interface IBranchesState {
   /**

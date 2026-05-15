@@ -1,0 +1,114 @@
+.worktree-dropdown {
+  width: 365px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+
+  .worktree-actions {
+    padding: var(--spacing);
+    border-bottom: var(--base-border);
+
+    .button-component {
+      width: 100%;
+
+      button {
+        width: 100%;
+        justify-content: center;
+      }
+
+      .icon {
+        margin-right: var(--spacing-half);
+      }
+    }
+  }
+
+  .worktree-message {
+    padding: var(--spacing);
+    color: var(--text-secondary-color);
+
+    &.error {
+      color: var(--error-color);
+    }
+  }
+
+  .worktree-group {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .worktree-group-header {
+    padding: var(--spacing-half) var(--spacing);
+    font-weight: var(--font-weight-semibold);
+    font-size: var(--font-size-sm);
+  }
+
+  .worktree-list-item {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    min-width: 0;
+    height: 44px;
+
+    &.current {
+      background: var(--box-selected-background-color);
+      color: var(--box-selected-text-color);
+    }
+
+    .worktree-list-item-main {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      min-width: 0;
+      flex: 1;
+      padding: 0 var(--spacing);
+      border: 0;
+      background: transparent;
+      color: inherit;
+      text-align: left;
+
+      &:not(:disabled):hover {
+        background: var(--list-item-hover-background-color);
+      }
+
+      &:disabled {
+        color: inherit;
+      }
+
+      .icon {
+        width: 16px;
+        margin-right: var(--spacing-half);
+        flex-shrink: 0;
+      }
+    }
+
+    .worktree-info {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      flex: 1;
+
+      .name,
+      .description {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .name {
+        font-weight: var(--font-weight-semibold);
+      }
+
+      .description {
+        color: var(--text-secondary-color);
+        font-size: var(--font-size-sm);
+      }
+    }
+
+    .worktree-remove-button {
+      width: 32px;
+      flex-shrink: 0;
+      align-self: center;
+      margin-right: var(--spacing-half);
+    }
+  }
+}

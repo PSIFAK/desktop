@@ -76,6 +76,7 @@ import {
   PullRequest,
   PullRequestSuggestedNextAction,
 } from '../../models/pull-request'
+import { IWorktree } from '../../models/worktree'
 import {
   Repository,
   RepositoryWithGitHubRepository,
@@ -389,6 +390,11 @@ export class Dispatcher {
    */
   public refreshRepository(repository: Repository): Promise<void> {
     return this.appStore._refreshOrRecoverRepository(repository)
+  }
+
+  /** Refresh repository list indicators for all repositories without pulling changes. */
+  public refreshAllRepositoryIndicators(): Promise<void> {
+    return this.appStore._refreshAllRepositoryIndicators()
   }
 
   /**
@@ -2322,6 +2328,38 @@ export class Dispatcher {
   /** Change the selected Branches foldout tab. */
   public changeBranchesTab(tab: BranchesTab): Promise<void> {
     return this.appStore._changeBranchesTab(tab)
+  }
+
+  public loadWorktrees(repository: Repository): Promise<void> {
+    return this.appStore._loadWorktrees(repository)
+  }
+
+  public selectWorktree(
+    repository: Repository,
+    worktree: IWorktree
+  ): Promise<void> {
+    return this.appStore._selectWorktree(repository, worktree)
+  }
+
+  public createWorktree(
+    repository: Repository,
+    branchName: string,
+    path: string,
+    startPoint: string
+  ): Promise<void> {
+    return this.appStore._createWorktree(
+      repository,
+      branchName,
+      path,
+      startPoint
+    )
+  }
+
+  public removeWorktree(
+    repository: Repository,
+    worktree: IWorktree
+  ): Promise<void> {
+    return this.appStore._removeWorktree(repository, worktree)
   }
 
   /**

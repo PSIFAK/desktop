@@ -82,6 +82,7 @@ import { MissingRepository } from './missing-repository'
 import { AddExistingRepository, CreateRepository } from './add-repository'
 import { CloneRepository } from './clone-repository'
 import { CreateBranch } from './create-branch'
+import { CreateWorktree, WorktreeDropdown } from './worktrees'
 import { SignIn } from './sign-in'
 import { InstallGit } from './install-git'
 import { EditorError } from './editor'
@@ -1708,6 +1709,30 @@ export class App extends React.Component<IAppProps, IAppState> {
             onDismissed={onPopupDismissedFn}
             dispatcher={this.props.dispatcher}
             initialName={popup.initialName || ''}
+          />
+        )
+      }
+      case PopupType.CreateWorktree: {
+        const state = this.props.repositoryStateManager.get(popup.repository)
+        const branchesState = state.branchesState
+
+        if (branchesState.tip.kind === TipState.Unknown) {
+          onPopupDismissedFn()
+          return null
+        }
+
+        return (
+          <CreateWorktree
+            key="create-worktree"
+            repository={popup.repository}
+            dispatcher={this.props.dispatcher}
+            tip={branchesState.tip}
+            defaultBranch={branchesState.defaultBranch}
+            allBranches={branchesState.allBranches}
+            worktrees={state.worktreesState.worktrees}
+            initialBranchName={popup.initialBranchName}
+            initialPath={popup.initialPath}
+            onDismissed={onPopupDismissedFn}
           />
         )
       }
@@ -3342,6 +3367,14 @@ export class App extends React.Component<IAppProps, IAppState> {
     }
   }
 
+  private onWorktreeDropdownStateChanged = (newState: DropdownState) => {
+    if (newState === 'open') {
+      this.props.dispatcher.showFoldout({ type: FoldoutType.Worktree })
+    } else {
+      this.props.dispatcher.closeFoldout(FoldoutType.Worktree)
+    }
+  }
+
   private renderBranchToolbarButton(): JSX.Element | null {
     const selection = this.state.selectedState
 
@@ -3381,6 +3414,32 @@ export class App extends React.Component<IAppProps, IAppState> {
         emoji={this.state.emoji}
         enableFocusTrap={enableFocusTrap}
         underlineLinks={this.state.underlineLinks}
+      />
+    )
+  }
+
+  private renderWorktreeToolbarButton(): JSX.Element | null {
+    const selection = this.state.selectedState
+
+    if (selection == null || selection.type !== SelectionType.Repository) {
+      return null
+    }
+
+    const currentFoldout = this.state.currentFoldout
+
+    const isOpen =
+      currentFoldout !== null && currentFoldout.type === FoldoutType.Worktree
+
+    const enableFocusTrap = this.state.currentPopup === null
+
+    return (
+      <WorktreeDropdown
+        dispatcher={this.props.dispatcher}
+        isOpen={isOpen}
+        onDropDownStateChanged={this.onWorktreeDropdownStateChanged}
+        repository={selection.repository}
+        repositoryState={selection.state}
+        enableFocusTrap={enableFocusTrap}
       />
     )
   }
@@ -3462,6 +3521,7 @@ export class App extends React.Component<IAppProps, IAppState> {
           {this.renderRepositoryToolbarButton()}
         </div>
         {this.renderBranchToolbarButton()}
+        {this.renderWorktreeToolbarButton()}
         {this.renderPushPullToolbarButton()}
       </Toolbar>
     )

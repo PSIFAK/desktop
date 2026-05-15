@@ -82,6 +82,21 @@
     }
   }
 
+  .repository-list-actions {
+    display: flex;
+    flex-shrink: 0;
+    gap: var(--spacing-half);
+  }
+
+  .refresh-repositories-button {
+    flex-shrink: 0;
+    min-width: auto;
+
+    .octicon {
+      margin: 0;
+    }
+  }
+
   .no-items {
     text-align: center;
     padding: var(--spacing);

@@ -61,6 +61,7 @@ import {
   PullRequest,
   PullRequestSuggestedNextAction,
 } from '../../models/pull-request'
+import { IWorktree } from '../../models/worktree'
 import {
   forkPullRequestRemoteName,
   IRemote,
@@ -219,6 +220,9 @@ import {
   TerminalOutput,
   HookProgress,
   git,
+  getWorktrees,
+  createWorktree as createGitWorktree,
+  removeWorktree as removeGitWorktree,
 } from '../git'
 import {
   installGlobalLFSFilters,
@@ -3216,10 +3220,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
     const newSelection =
       currentlySelectedFile.selection.withSelectableLines(selectableLines)
     const selectedFile = currentlySelectedFile.withSelection(newSelection)
-    const updatedFiles = changesState.workingDirectory.files.map(f =>
-      f.id === selectedFile.id ? selectedFile : f
-    )
-    const workingDirectory = WorkingDirectoryStatus.fromFiles(updatedFiles)
+    const workingDirectory = changesState.workingDirectory.withUpdatedFiles([
+      selectedFile,
+    ])
 
     const selection: ChangesWorkingDirectorySelection = {
       ...changesState.selection,
@@ -3591,10 +3594,10 @@ export class AppStore extends TypedBaseStore<IAppState> {
     const modifiedIds = new Set<string>(files.map(f => f.id))
 
     this.repositoryStateCache.updateChangesState(repository, state => {
-      const workingDirectory = WorkingDirectoryStatus.fromFiles(
-        state.workingDirectory.files.map(f =>
-          modifiedIds.has(f.id) ? f.withIncludeAll(include) : f
-        )
+      const workingDirectory = state.workingDirectory.withUpdatedFiles(
+        files
+          .filter(f => modifiedIds.has(f.id))
+          .map(f => f.withIncludeAll(include))
       )
 
       return { workingDirectory }
@@ -3624,11 +3627,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
     selection: DiffSelection
   ) {
     this.repositoryStateCache.updateChangesState(repository, state => {
-      const newFiles = state.workingDirectory.files.map(f =>
-        f.id === file.id ? f.withSelection(selection) : f
-      )
-
-      const workingDirectory = WorkingDirectoryStatus.fromFiles(newFiles)
+      const workingDirectory = state.workingDirectory.withUpdatedFiles([
+        file.withSelection(selection),
+      ])
 
       return { workingDirectory }
     })
@@ -3717,6 +3718,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     // loadBranches needs the default remote to determine the default branch
     await gitStore.loadRemotes()
     await gitStore.loadBranches()
+    await this._loadWorktrees(repository)
 
     const section = state.selectedSection
     let refreshSectionPromise: Promise<void>
@@ -3805,7 +3807,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
   /**
    * Refresh indicator in repository list for a specific repository
    */
-  private refreshIndicatorForRepository = async (repository: Repository) => {
+  private refreshIndicatorForRepository = async (
+    repository: Repository,
+    fetchRemoteStatus: boolean = true,
+    forceRemoteStatusRefresh: boolean = false
+  ) => {
     const lookup = this.localRepositoryStateLookup
 
     if (repository.missing) {
@@ -3829,13 +3835,20 @@ export class AppStore extends TypedBaseStore<IAppState> {
     this.updateSidebarIndicator(repository, status)
     this.emitUpdate()
 
+    if (!fetchRemoteStatus) {
+      return
+    }
+
     const lastPush = await inferLastPushForRepository(
       this.accounts,
       gitStore,
       repository
     )
 
-    if (await this.shouldBackgroundFetch(repository, lastPush)) {
+    if (
+      forceRemoteStatusRefresh ||
+      (await this.shouldBackgroundFetch(repository, lastPush))
+    ) {
       const aheadBehind = await this.fetchForRepositoryIndicator(repository)
 
       const existing = lookup.get(repository.id)
@@ -3847,6 +3860,32 @@ export class AppStore extends TypedBaseStore<IAppState> {
       })
       this.emitUpdate()
     }
+  }
+
+  public async _refreshAllRepositoryIndicators(): Promise<void> {
+    const repositories = this.repositories.filter(
+      (repository): repository is Repository => repository instanceof Repository
+    )
+
+    const concurrency = Math.min(4, repositories.length)
+    let nextIndex = 0
+
+    const refreshNextRepository = async () => {
+      while (nextIndex < repositories.length) {
+        const currentIndex = nextIndex++
+        const repository = repositories[currentIndex]
+
+        try {
+          await this.refreshIndicatorForRepository(repository, true, true)
+        } catch (error) {
+          this.emitError(error)
+        }
+      }
+    }
+
+    await Promise.all(
+      Array.from({ length: concurrency }, () => refreshNextRepository())
+    )
   }
 
   private getRepositoriesForIndicatorRefresh = () => {
@@ -7136,6 +7175,105 @@ export class AppStore extends TypedBaseStore<IAppState> {
     this.emitUpdate()
 
     return Promise.resolve()
+  }
+
+  public async _loadWorktrees(repository: Repository): Promise<void> {
+    this.repositoryStateCache.updateWorktreesState(repository, () => ({
+      isLoadingWorktrees: true,
+      lastError: null,
+    }))
+    this.emitUpdate()
+
+    try {
+      const worktrees = await getWorktrees(repository)
+
+      this.repositoryStateCache.updateWorktreesState(repository, () => ({
+        worktrees,
+        isLoadingWorktrees: false,
+        lastError: null,
+      }))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      log.warn(
+        `[AppStore] unable to load worktrees for ${repository.path}`,
+        error
+      )
+      this.repositoryStateCache.updateWorktreesState(repository, () => ({
+        isLoadingWorktrees: false,
+        lastError: message,
+      }))
+    }
+
+    this.emitUpdate()
+  }
+
+  public async _selectWorktree(
+    repository: Repository,
+    worktree: IWorktree
+  ): Promise<void> {
+    if (worktree.isCurrent || worktree.isPrunable) {
+      return
+    }
+
+    const existingRepository = matchExistingRepository(
+      this.repositories,
+      worktree.path
+    )
+
+    if (existingRepository !== undefined) {
+      await this._selectRepository(existingRepository)
+      return
+    }
+
+    const repositories = await this._addRepositories([worktree.path])
+    if (repositories.length > 0) {
+      await this._selectRepository(repositories[0])
+    }
+  }
+
+  public async _createWorktree(
+    repository: Repository,
+    branchName: string,
+    path: string,
+    startPoint: string
+  ): Promise<void> {
+    try {
+      await createGitWorktree(repository, path, branchName, startPoint)
+      await this._loadWorktrees(repository)
+
+      const repositories = await this._addRepositories([path])
+      if (repositories.length > 0) {
+        await this._selectRepository(repositories[0])
+      }
+    } catch (error) {
+      this.emitError(error)
+    }
+  }
+
+  public async _removeWorktree(
+    repository: Repository,
+    worktree: IWorktree
+  ): Promise<void> {
+    if (worktree.isCurrent || worktree.isMain || worktree.isPrunable) {
+      return
+    }
+
+    try {
+      await removeGitWorktree(repository, worktree.path)
+
+      const existingRepository = matchExistingRepository(
+        this.repositories,
+        worktree.path
+      )
+
+      if (existingRepository !== undefined) {
+        await this.repositoriesStore.removeRepository(existingRepository)
+      }
+
+      await this._loadWorktrees(repository)
+    } catch (error) {
+      this.emitError(error)
+    }
   }
 
   public async _showGitHubExplore(repository: Repository): Promise<void> {
