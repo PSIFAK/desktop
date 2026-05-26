@@ -450,7 +450,7 @@ export class CopilotStore extends BaseStore {
       },
       cwd: repositoryPath,
       autoStart: true,
-      gitHubToken: this.currentAccount.token,
+      githubToken: this.currentAccount.token,
     })
   }
 
@@ -584,7 +584,8 @@ export class CopilotStore extends BaseStore {
         },
         availableTools: [],
         onPermissionRequest: async () => ({
-          kind: 'reject',
+          kind: 'denied-by-permission-request-hook',
+          message: 'Tool calls are disabled for commit message generation.',
         }),
       })
 
@@ -757,7 +758,8 @@ export class CopilotStore extends BaseStore {
             content: ConflictResolutionSystemPrompt,
           },
           onPermissionRequest: async () => ({
-            kind: 'reject',
+            kind: 'denied-by-permission-request-hook',
+            message: 'Tool calls are disabled for conflict resolution.',
           }),
         })
 
