@@ -115,6 +115,7 @@ import {
   sendWillQuitEvenIfUpdatingSync,
   quitApp,
   sendCancelQuittingSync,
+  showOpenDialog,
 } from '../../ui/main-process-proxy'
 import {
   API,
@@ -364,7 +365,7 @@ import {
   getNotificationsEnabled,
 } from './notifications-store'
 import * as ipcRenderer from '../ipc-renderer'
-import { pathExists } from '../../ui/lib/path-exists'
+import { pathExists } from '../path-exists'
 import { offsetFromNow } from '../offset-from'
 import { findContributionTargetDefaultBranch } from '../branch'
 import { ValidNotificationPullRequestReview } from '../valid-notification-pull-request-review'
@@ -386,7 +387,6 @@ import {
 } from '../custom-integration'
 import { updateStore } from '../../ui/lib/update-store'
 import { BypassReasonType } from '../../ui/secret-scanning/bypass-push-protection-dialog'
-import { getRepoHooks } from '../hooks/get-repo-hooks'
 import {
   ICopilotConflictResolutionResponse,
   IConflictResolutionProgress,
@@ -3676,13 +3676,20 @@ export class AppStore extends TypedBaseStore<IAppState> {
       return repository
     }
 
+    const type = await getRepositoryType(repository.path)
+
     const foundRepository =
-      (await pathExists(repository.path)) &&
-      (await getRepositoryType(repository.path)).kind === 'regular' &&
-      (await this._loadStatus(repository)) !== null
+      type.kind === 'regular' && (await this._loadStatus(repository)) !== null
 
     if (foundRepository) {
-      return await this._updateRepositoryMissing(repository, false)
+      let recovered = await this._updateRepositoryMissing(repository, false)
+      if (type.kind === 'regular' && recovered.gitDir !== type.gitDir) {
+        recovered = await this.repositoriesStore.updateRepositoryGitDir(
+          recovered,
+          type.gitDir
+        )
+      }
+      return recovered
     }
     return repository
   }
@@ -3699,6 +3706,17 @@ export class AppStore extends TypedBaseStore<IAppState> {
     if (!exists) {
       this._updateRepositoryMissing(repository, true)
       return
+    }
+
+    // Populate gitDir for repositories that don't have it yet
+    if (repository.gitDir === undefined) {
+      const type = await getRepositoryType(repository.path)
+      if (type.kind === 'regular') {
+        repository = await this.repositoriesStore.updateRepositoryGitDir(
+          repository,
+          type.gitDir
+        )
+      }
     }
 
     const state = this.repositoryStateCache.get(repository)
@@ -3738,7 +3756,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
       gitStore.updateLastFetched(),
       gitStore.loadStashEntries(),
       this._refreshAuthor(repository),
-      this._refreshHasCommitHooks(repository),
       refreshSectionPromise,
     ])
 
@@ -4042,17 +4059,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
       ...commitOptions,
     }))
     this.emitUpdate()
-  }
-
-  private async _refreshHasCommitHooks(repository: Repository): Promise<void> {
-    const hooks = ['pre-commit', 'commit-msg']
-    // Break early if we find either one of the hooks
-    for await (const {} of getRepoHooks(repository.path, hooks)) {
-      const hasCommitHooks = true
-      this.repositoryStateCache.update(repository, () => ({ hasCommitHooks }))
-      this.emitUpdate()
-      return
-    }
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
@@ -6838,13 +6844,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
     return result
   }
 
-  public _updateRepositoryPath(
-    repository: Repository,
-    path: string
-  ): Promise<Repository> {
-    return this.repositoriesStore.updateRepositoryPath(repository, path)
-  }
-
   public async _removeAccount(account: Account) {
     log.info(
       `[AppStore] removing account ${account.login} (${account.name}) from store`
@@ -6912,7 +6911,8 @@ export class AppStore extends TypedBaseStore<IAppState> {
       await this.repositoriesStore.addTutorialRepository(
         validatedPath,
         endpoint,
-        apiRepository
+        apiRepository,
+        type.gitDir
       )
       this.tutorialAssessor.onNewTutorialRepository()
     } else {
@@ -6935,9 +6935,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
       })
 
       if (repositoryType.kind === 'unsafe') {
-        const repository = await this.repositoriesStore.addRepository(path, {
-          missing: true,
-        })
+        const repository = await this.repositoriesStore.addRepository(
+          path,
+          undefined,
+          { missing: true }
+        )
 
         addedRepositories.push(repository)
         continue
@@ -6958,7 +6960,8 @@ export class AppStore extends TypedBaseStore<IAppState> {
         }
 
         const addedRepo = await this.repositoriesStore.addRepository(
-          validatedPath
+          validatedPath,
+          repositoryType.gitDir
         )
 
         // initialize the remotes for this new repository to ensure it can fetch
@@ -6992,6 +6995,33 @@ export class AppStore extends TypedBaseStore<IAppState> {
     }
 
     return addedRepositories
+  }
+
+  public async _relocateRepository(repository: Repository): Promise<void> {
+    const path = await showOpenDialog({ properties: ['openDirectory'] })
+
+    if (path === null) {
+      return
+    }
+
+    const rt = await getRepositoryType(path)
+
+    if (rt.kind === 'regular') {
+      await this.repositoriesStore.updateRepositoryPath(
+        repository,
+        rt.topLevelWorkingDirectory,
+        rt.gitDir
+      )
+    } else if (rt.kind === 'unsafe') {
+      await this.repositoriesStore.updateRepositoryPath(
+        repository,
+        path,
+        undefined,
+        true
+      )
+    } else {
+      this.emitError(new Error(this.getInvalidRepoPathsMessage([path])))
+    }
   }
 
   public async _removeRepository(

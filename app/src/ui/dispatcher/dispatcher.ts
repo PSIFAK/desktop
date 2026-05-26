@@ -100,7 +100,6 @@ import {
   executeMenuItem,
   moveToApplicationsFolder,
   isWindowFocused,
-  showOpenDialog,
 } from '../main-process-proxy'
 import {
   CommitStatusStore,
@@ -1730,14 +1729,8 @@ export class Dispatcher {
   /**
    * Update the location of an existing repository and clear the missing flag.
    */
-  public async relocateRepository(repository: Repository): Promise<void> {
-    const path = await showOpenDialog({
-      properties: ['openDirectory'],
-    })
-
-    if (path !== null) {
-      await this.updateRepositoryPath(repository, path)
-    }
+  public relocateRepository(repository: Repository): Promise<void> {
+    return this.appStore._relocateRepository(repository)
   }
 
   /**
@@ -1754,14 +1747,6 @@ export class Dispatcher {
       repository,
       workflowPreferences
     )
-  }
-
-  /** Update the repository's path. */
-  private async updateRepositoryPath(
-    repository: Repository,
-    path: string
-  ): Promise<void> {
-    await this.appStore._updateRepositoryPath(repository, path)
   }
 
   public async setAppFocusState(isFocused: boolean): Promise<void> {
