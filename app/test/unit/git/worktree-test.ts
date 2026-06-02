@@ -1,28 +1,236 @@
-import { describe, it } from 'node:test'
 import assert from 'node:assert'
 import * as Path from 'path'
+import { describe, it } from 'node:test'
 import { exec } from 'dugite'
-
-import { createTempDirectory } from '../../helpers/temp'
 import { setupEmptyRepository } from '../../helpers/repositories'
 import { makeCommit } from '../../helpers/repository-scaffolding'
 import {
-  createWorktree,
-  getWorktreeCheckedOutBranches,
-  getWorktrees,
-  parseWorktreeList,
-  removeWorktree,
+  parseWorktreePorcelainOutput,
+  listWorktrees,
 } from '../../../src/lib/git'
 
 describe('git/worktree', () => {
-  describe('getWorktreeCheckedOutBranches', () => {
+  describe('parseWorktreePorcelainOutput', () => {
+    it('returns empty array for empty output', () => {
+      assert.deepStrictEqual(parseWorktreePorcelainOutput(''), [])
+      assert.deepStrictEqual(parseWorktreePorcelainOutput('  \n  '), [])
+    })
+
+    it('parses a single main worktree', () => {
+      const output =
+        [
+          'worktree /path/to/repo',
+          'HEAD abc1234abc1234abc1234abc1234abc1234abc123',
+          'branch refs/heads/main',
+        ].join('\0') + '\0'
+
+      const entries = parseWorktreePorcelainOutput(output)
+      assert.strictEqual(entries.length, 1)
+      assert.deepStrictEqual(entries[0], {
+        path: Path.normalize('/path/to/repo'),
+        head: 'abc1234abc1234abc1234abc1234abc1234abc123',
+        branch: 'refs/heads/main',
+        isDetached: false,
+        type: 'main',
+        isLocked: false,
+        isPrunable: false,
+      })
+    })
+
+    it('parses multiple worktrees', () => {
+      const output =
+        [
+          [
+            'worktree /path/to/repo',
+            'HEAD abc1234abc1234abc1234abc1234abc1234abc123',
+            'branch refs/heads/main',
+          ].join('\0'),
+          [
+            'worktree /path/to/linked',
+            'HEAD def5678def5678def5678def5678def5678def567',
+            'branch refs/heads/feature',
+          ].join('\0'),
+        ].join('\0\0') + '\0'
+
+      const entries = parseWorktreePorcelainOutput(output)
+      assert.strictEqual(entries.length, 2)
+
+      assert.strictEqual(entries[0].type, 'main')
+      assert.strictEqual(entries[0].path, Path.normalize('/path/to/repo'))
+
+      assert.strictEqual(entries[1].type, 'linked')
+      assert.strictEqual(entries[1].path, Path.normalize('/path/to/linked'))
+      assert.strictEqual(entries[1].branch, 'refs/heads/feature')
+    })
+
+    it('parses detached HEAD worktree', () => {
+      const output =
+        [
+          [
+            'worktree /path/to/repo',
+            'HEAD abc1234abc1234abc1234abc1234abc1234abc123',
+            'branch refs/heads/main',
+          ].join('\0'),
+          [
+            'worktree /path/to/detached',
+            'HEAD def5678def5678def5678def5678def5678def567',
+            'detached',
+          ].join('\0'),
+        ].join('\0\0') + '\0'
+
+      const entries = parseWorktreePorcelainOutput(output)
+      assert.strictEqual(entries.length, 2)
+
+      assert.strictEqual(entries[1].isDetached, true)
+      assert.strictEqual(entries[1].branch, null)
+    })
+
+    it('parses locked worktree', () => {
+      const output =
+        [
+          [
+            'worktree /path/to/repo',
+            'HEAD abc1234abc1234abc1234abc1234abc1234abc123',
+            'branch refs/heads/main',
+          ].join('\0'),
+          [
+            'worktree /path/to/locked-wt',
+            'HEAD def5678def5678def5678def5678def5678def567',
+            'branch refs/heads/locked-branch',
+            'locked',
+          ].join('\0'),
+        ].join('\0\0') + '\0'
+
+      const entries = parseWorktreePorcelainOutput(output)
+      assert.strictEqual(entries[1].isLocked, true)
+    })
+
+    it('parses locked worktree with reason', () => {
+      const output =
+        [
+          [
+            'worktree /path/to/repo',
+            'HEAD abc1234abc1234abc1234abc1234abc1234abc123',
+            'branch refs/heads/main',
+          ].join('\0'),
+          [
+            'worktree /path/to/locked-wt',
+            'HEAD def5678def5678def5678def5678def5678def567',
+            'branch refs/heads/locked-branch',
+            'locked reason why it is locked',
+          ].join('\0'),
+        ].join('\0\0') + '\0'
+
+      const entries = parseWorktreePorcelainOutput(output)
+      assert.strictEqual(entries[1].isLocked, true)
+    })
+
+    it('parses prunable worktree', () => {
+      const output =
+        [
+          [
+            'worktree /path/to/repo',
+            'HEAD abc1234abc1234abc1234abc1234abc1234abc123',
+            'branch refs/heads/main',
+          ].join('\0'),
+          [
+            'worktree /path/to/prunable-wt',
+            'HEAD def5678def5678def5678def5678def5678def567',
+            'branch refs/heads/stale',
+            'prunable gitdir file points to non-existent location',
+          ].join('\0'),
+        ].join('\0\0') + '\0'
+
+      const entries = parseWorktreePorcelainOutput(output)
+      assert.strictEqual(entries[1].isPrunable, true)
+    })
+
+    it('parses paths with spaces', () => {
+      const output =
+        [
+          [
+            'worktree /path/to/my repo',
+            'HEAD abc1234abc1234abc1234abc1234abc1234abc123',
+            'branch refs/heads/main',
+          ].join('\0'),
+          [
+            'worktree /path/to/my other worktree',
+            'HEAD def5678def5678def5678def5678def5678def567',
+            'branch refs/heads/feature',
+          ].join('\0'),
+        ].join('\0\0') + '\0'
+
+      const entries = parseWorktreePorcelainOutput(output)
+      assert.strictEqual(entries[0].path, Path.normalize('/path/to/my repo'))
+      assert.strictEqual(
+        entries[1].path,
+        Path.normalize('/path/to/my other worktree')
+      )
+    })
+
+    it('parses worktree with locked and prunable flags combined', () => {
+      const output =
+        [
+          [
+            'worktree /path/to/repo',
+            'HEAD abc1234abc1234abc1234abc1234abc1234abc123',
+            'branch refs/heads/main',
+          ].join('\0'),
+          [
+            'worktree /path/to/bad-wt',
+            'HEAD def5678def5678def5678def5678def5678def567',
+            'detached',
+            'locked',
+            'prunable',
+          ].join('\0'),
+        ].join('\0\0') + '\0'
+
+      const entries = parseWorktreePorcelainOutput(output)
+      assert.strictEqual(entries[1].isDetached, true)
+      assert.strictEqual(entries[1].isLocked, true)
+      assert.strictEqual(entries[1].isPrunable, true)
+      assert.strictEqual(entries[1].branch, null)
+    })
+
+    it('parses paths with newlines', () => {
+      const output =
+        [
+          [
+            'worktree /path/to/my\nrepo',
+            'HEAD abc1234abc1234abc1234abc1234abc1234abc123',
+            'branch refs/heads/main',
+          ].join('\0'),
+          [
+            'worktree /path/to/my\nother\nworktree',
+            'HEAD def5678def5678def5678def5678def5678def567',
+            'branch refs/heads/feature',
+          ].join('\0'),
+        ].join('\0\0') + '\0'
+
+      const entries = parseWorktreePorcelainOutput(output)
+      assert.strictEqual(entries[0].path, Path.normalize('/path/to/my\nrepo'))
+      assert.strictEqual(
+        entries[1].path,
+        Path.normalize('/path/to/my\nother\nworktree')
+      )
+    })
+  })
+
+  describe('listWorktrees', () => {
+    /** Helper to extract checked-out branch refs from worktree entries */
+    function checkedOutBranches(
+      worktrees: ReadonlyArray<{ readonly branch: string | null }>
+    ): ReadonlySet<string> {
+      return new Set(worktrees.map(wt => wt.branch).filter(b => b !== null))
+    }
+
     it('returns only main worktree branch when there are no linked worktrees', async t => {
       const repo = await setupEmptyRepository(t, 'main')
       await makeCommit(repo, {
         entries: [{ path: 'README', contents: 'hello' }],
       })
 
-      const branches = await getWorktreeCheckedOutBranches(repo)
+      const branches = checkedOutBranches(await listWorktrees(repo))
       assert.strictEqual(branches.size, 1)
       assert(branches.has('refs/heads/main'))
     })
@@ -38,7 +246,7 @@ describe('git/worktree', () => {
         repo.path
       )
 
-      const branches = await getWorktreeCheckedOutBranches(repo)
+      const branches = checkedOutBranches(await listWorktrees(repo))
       assert(branches.has('refs/heads/feature-a'))
       assert(branches.has('refs/heads/main'))
       assert.strictEqual(branches.size, 2)
@@ -60,7 +268,7 @@ describe('git/worktree', () => {
         repo.path
       )
 
-      const branches = await getWorktreeCheckedOutBranches(repo)
+      const branches = checkedOutBranches(await listWorktrees(repo))
       assert(branches.has('refs/heads/feature-a'))
       assert(branches.has('refs/heads/feature-b'))
       assert(branches.has('refs/heads/main'))
@@ -80,76 +288,9 @@ describe('git/worktree', () => {
         repo.path
       )
 
-      const branches = await getWorktreeCheckedOutBranches(repo)
-      // Detached worktrees have no branch line in porcelain output
-      // but the main worktree branch is still included
+      const branches = checkedOutBranches(await listWorktrees(repo))
       assert.strictEqual(branches.size, 1)
       assert(branches.has('refs/heads/main'))
     })
-  })
-
-  describe('parseWorktreeList', () => {
-    it('parses porcelain worktree output', () => {
-      const output = [
-        'worktree /repo',
-        'HEAD abc123',
-        'branch refs/heads/main',
-        '',
-        'worktree /repo feature',
-        'HEAD def456',
-        'branch refs/heads/feature/test',
-        'locked dependency install',
-        '',
-        'worktree /repo detached',
-        'HEAD 123abc',
-        'detached',
-        'prunable gitdir file points to non-existent location',
-        '',
-      ].join('\n')
-
-      const worktrees = parseWorktreeList(output, '/repo')
-
-      assert.equal(worktrees.length, 3)
-      assert.equal(worktrees[0].isMain, true)
-      assert.equal(worktrees[0].isCurrent, true)
-      assert.equal(worktrees[0].branchName, 'main')
-      assert.equal(worktrees[1].branchName, 'feature/test')
-      assert.equal(worktrees[1].isLocked, true)
-      assert.equal(worktrees[1].lockReason, 'dependency install')
-      assert.equal(worktrees[2].isDetached, true)
-      assert.equal(worktrees[2].isPrunable, true)
-    })
-  })
-
-  it('creates, lists, and removes a worktree', async t => {
-    const repository = await setupEmptyRepository(t, 'main')
-    await makeCommit(repository, {
-      entries: [{ path: 'README.md', contents: 'hello' }],
-    })
-
-    const parent = await createTempDirectory(t)
-    const worktreePath = Path.join(parent, 'repo feature')
-
-    await createWorktree(repository, worktreePath, 'feature/worktree', 'main')
-
-    const worktrees = await getWorktrees(repository)
-    const created = worktrees.find(
-      worktree => Path.normalize(worktree.path) === Path.normalize(worktreePath)
-    )
-
-    assert.notEqual(created, undefined)
-    assert.equal(created?.branchName, 'feature/worktree')
-    assert.equal(created?.isCurrent, false)
-
-    await removeWorktree(repository, worktreePath)
-
-    const afterRemove = await getWorktrees(repository)
-    assert.equal(
-      afterRemove.some(
-        worktree =>
-          Path.normalize(worktree.path) === Path.normalize(worktreePath)
-      ),
-      false
-    )
   })
 })

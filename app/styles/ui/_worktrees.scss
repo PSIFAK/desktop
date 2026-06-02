@@ -1,114 +1,93 @@
-.worktree-dropdown {
-  width: 365px;
+@import '../mixins';
+
+.worktree-list {
+  height: 100%;
   display: flex;
   flex-direction: column;
+  width: 100%;
   min-height: 0;
 
-  .worktree-actions {
-    padding: var(--spacing);
-    border-bottom: var(--base-border);
-
-    .button-component {
-      width: 100%;
-
-      button {
-        width: 100%;
-        justify-content: center;
-      }
-
-      .icon {
-        margin-right: var(--spacing-half);
-      }
-    }
-  }
-
-  .worktree-message {
-    padding: var(--spacing);
-    color: var(--text-secondary-color);
-
-    &.error {
-      color: var(--error-color);
-    }
-  }
-
-  .worktree-group {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .worktree-group-header {
-    padding: var(--spacing-half) var(--spacing);
-    font-weight: var(--font-weight-semibold);
-    font-size: var(--font-size-sm);
-  }
-
-  .worktree-list-item {
+  .worktrees-list-item {
+    height: 100%;
     display: flex;
     flex-direction: row;
-    align-items: stretch;
+    align-items: center;
     min-width: 0;
-    height: 44px;
+    flex-grow: 1;
+    padding: 0 var(--spacing);
 
-    &.current {
-      background: var(--box-selected-background-color);
-      color: var(--box-selected-text-color);
-    }
-
-    .worktree-list-item-main {
-      display: flex;
-      flex-direction: row;
-      align-items: center;
-      min-width: 0;
-      flex: 1;
-      padding: 0 var(--spacing);
-      border: 0;
-      background: transparent;
-      color: inherit;
-      text-align: left;
-
-      &:not(:disabled):hover {
-        background: var(--list-item-hover-background-color);
-      }
-
-      &:disabled {
-        color: inherit;
-      }
-
-      .icon {
-        width: 16px;
-        margin-right: var(--spacing-half);
-        flex-shrink: 0;
-      }
-    }
-
-    .worktree-info {
-      display: flex;
-      flex-direction: column;
-      min-width: 0;
-      flex: 1;
-
-      .name,
-      .description {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-
-      .name {
-        font-weight: var(--font-weight-semibold);
-      }
-
-      .description {
-        color: var(--text-secondary-color);
-        font-size: var(--font-size-sm);
-      }
-    }
-
-    .worktree-remove-button {
-      width: 32px;
-      flex-shrink: 0;
-      align-self: center;
+    .icon {
       margin-right: var(--spacing-half);
+      width: 16px; // Force a consistent width
+      flex-shrink: 0;
+      color: var(--text-secondary-color);
     }
+
+    &.current-worktree .icon {
+      color: var(--text-color);
+    }
+
+    .name {
+      flex-grow: 2;
+      @include ellipsis;
+      max-width: 65%;
+      margin-right: var(--spacing-half);
+
+      /* Used to highlight substring matches in filtered lists */
+      mark {
+        font-weight: bold;
+        /* Reset browser defaults */
+        background-color: inherit;
+        color: currentColor;
+      }
+    }
+
+    .description {
+      margin-right: var(--spacing-half);
+      color: var(--text-secondary-color);
+      font-size: var(--font-size-sm);
+      flex-grow: 1;
+      text-align: right;
+      white-space: nowrap;
+      @include ellipsis;
+    }
+  }
+
+  .new-worktree-button {
+    flex-shrink: 0;
+  }
+
+  .no-items-found {
+    padding: var(--spacing);
+    text-align: center;
+    color: var(--text-secondary-color);
+  }
+
+  .filter-list-group-header {
+    @include ellipsis;
+    padding: 0 var(--spacing);
+    font-weight: var(--font-weight-semibold);
+  }
+}
+
+#add-worktree {
+  width: 450px;
+
+  .autocompletion-popup {
+    width: 350px;
+  }
+
+  .branch-status-hint {
+    margin: var(--spacing-third) 0 0;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary-color);
+  }
+  .ref-name-text-box {
+    margin-bottom: 0;
+  }
+
+  #add-worktree-path-msg {
+    margin-bottom: var(--spacing);
+    margin-top: calc(-1 * var(--spacing));
   }
 }

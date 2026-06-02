@@ -136,6 +136,7 @@ import {
   ICopilotConflictResolutionResponse,
   IConflictResolutionProgress,
 } from '../../lib/copilot-conflict-resolution'
+import { WorktreeEntry } from '../../models/worktree'
 
 /**
  * An error handler function.
@@ -438,6 +439,16 @@ export class Dispatcher {
   /** Close the specified foldout */
   public closeFoldout(foldout: FoldoutType): Promise<void> {
     return this.appStore._closeFoldout(foldout)
+  }
+
+  /** Show the worktrees foldout */
+  public showWorktreesFoldout(): Promise<void> {
+    return this.showFoldout({ type: FoldoutType.Worktree })
+  }
+
+  /** Close the worktrees foldout */
+  public closeWorktreesFoldout(): Promise<void> {
+    return this.closeFoldout(FoldoutType.Worktree)
   }
 
   /**
@@ -994,6 +1005,43 @@ export class Dispatcher {
    */
   public resetBranchDropdownWidth(): Promise<void> {
     return this.appStore._resetBranchDropdownWidth()
+  }
+
+  public setWorktreeDropdownWidth(width: number): Promise<void> {
+    return this.appStore._setWorktreeDropdownWidth(width)
+  }
+
+  public resetWorktreeDropdownWidth(): Promise<void> {
+    return this.appStore._resetWorktreeDropdownWidth()
+  }
+
+  /**
+   * Switch the repository to a different worktree path.
+   *
+   * If the target path is already registered as a separate repository, that
+   * repository is selected instead.
+   */
+  public async switchWorktree(
+    repository: Repository,
+    worktree: WorktreeEntry
+  ): Promise<void> {
+    await this.appStore
+      ._switchWorktree(repository, worktree)
+      .catch(e => this.postError(e))
+  }
+
+  /**
+   * Delete a worktree. If the worktree being deleted is the currently selected
+   * one, the repository is switched to the main worktree first.
+   */
+  public async deleteWorktree(
+    repository: Repository,
+    worktreePath: string,
+    force?: boolean
+  ): Promise<void> {
+    await this.appStore
+      ._deleteWorktree(repository, worktreePath, force)
+      .catch(e => this.postError(e))
   }
 
   /**
@@ -2232,6 +2280,8 @@ export class Dispatcher {
           retryAction.files,
           false
         )
+      case RetryActionType.PopStash:
+        return this.popStash(retryAction.repository, retryAction.stashEntry)
       default:
         return assertNever(retryAction, `Unknown retry action: ${retryAction}`)
     }
