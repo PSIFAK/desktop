@@ -42,12 +42,14 @@ import { Prompts } from './prompts'
 import { Repository } from '../../models/repository'
 import { Notifications } from './notifications'
 import { Accessibility } from './accessibility'
-import type { ModelInfo } from '@github/copilot-sdk'
 import { CopilotPreferences } from './copilot'
 import type {
   CopilotFeature,
-  CopilotModelSelections,
+  CopilotModelsByAccount,
+  CopilotModelSelectionsByAccount,
+  CopilotQuotaSnapshotsByAccount,
 } from '../../lib/stores/copilot-store'
+import { getCopilotAccountCacheKey } from '../../lib/stores/copilot-store'
 import type { IBYOKProvider } from '../../lib/copilot/byok'
 import { PopupType } from '../../models/popup'
 import {
@@ -100,6 +102,7 @@ interface IPreferencesProps {
   readonly confirmUndoCommit: boolean
   readonly askForConfirmationOnCommitFilteredChanges: boolean
   readonly confirmCommitMessageOverride: boolean
+  readonly confirmWorktreeRemoval: boolean
   readonly uncommittedChangesStrategy: UncommittedChangesStrategy
   readonly selectedExternalEditor: string | null
   readonly selectedShell: Shell
@@ -113,10 +116,11 @@ interface IPreferencesProps {
   readonly onEditGlobalGitConfig: () => void
   readonly underlineLinks: boolean
   readonly showDiffCheckMarks: boolean
-  readonly selectedCopilotModels: CopilotModelSelections
-  readonly copilotModels: ReadonlyArray<ModelInfo> | null
-  readonly copilotAvailable: boolean
+  readonly selectedCopilotModelsByAccount: CopilotModelSelectionsByAccount
+  readonly copilotModelsByAccount: CopilotModelsByAccount
+  readonly copilotQuotaSnapshotsByAccount: CopilotQuotaSnapshotsByAccount
   readonly byokProviders: ReadonlyArray<IBYOKProvider>
+  readonly alwaysUseCopilotForConflictResolution: boolean
 }
 
 interface IPreferencesState {
@@ -142,6 +146,7 @@ interface IPreferencesState {
   readonly confirmUndoCommit: boolean
   readonly askForConfirmationOnCommitFilteredChanges: boolean
   readonly confirmCommitMessageOverride: boolean
+  readonly confirmWorktreeRemoval: boolean
   readonly uncommittedChangesStrategy: UncommittedChangesStrategy
   readonly availableEditors: ReadonlyArray<string>
   readonly useCustomEditor: boolean
@@ -178,7 +183,8 @@ interface IPreferencesState {
   // Whether the preferences related to Git hooks environment have been changed
   readonly hooksPreferencesDirty: boolean
 
-  readonly selectedCopilotModels: CopilotModelSelections
+  readonly selectedCopilotModelsByAccount: CopilotModelSelectionsByAccount
+  readonly alwaysUseCopilotForConflictResolution: boolean
   readonly selectedDateFormat?: DateFormat
   readonly selectedTimeFormat?: TimeFormat
   readonly selectedNumberFormat?: INumberFormat
@@ -231,6 +237,7 @@ export class Preferences extends React.Component<
       confirmUndoCommit: false,
       askForConfirmationOnCommitFilteredChanges: false,
       confirmCommitMessageOverride: true,
+      confirmWorktreeRemoval: true,
       uncommittedChangesStrategy: defaultUncommittedChangesStrategy,
       selectedExternalEditor: this.props.selectedExternalEditor,
       availableShells: [],
@@ -245,7 +252,9 @@ export class Preferences extends React.Component<
       cacheGitHookEnv: getCacheHooksEnv(),
       selectedGitHookEnvShell: getGitHookEnvShell(),
       hooksPreferencesDirty: false,
-      selectedCopilotModels: this.props.selectedCopilotModels,
+      selectedCopilotModelsByAccount: this.props.selectedCopilotModelsByAccount,
+      alwaysUseCopilotForConflictResolution:
+        this.props.alwaysUseCopilotForConflictResolution,
       selectedDateFormat: getDateFormatPreference(),
       selectedTimeFormat: getTimeFormatPreference(),
       selectedNumberFormat: getNumberFormatPreference(),
@@ -287,6 +296,7 @@ export class Preferences extends React.Component<
     // Kick off Copilot model list fetch (non-blocking)
     if (this.isCopilotSdkEnabled) {
       this.props.dispatcher.fetchCopilotModels()
+      this.props.dispatcher.fetchCopilotQuotaSnapshots()
     }
 
     const availableEditors = editors.map(e => e.editor) ?? null
@@ -315,6 +325,7 @@ export class Preferences extends React.Component<
       askForConfirmationOnCommitFilteredChanges:
         this.props.askForConfirmationOnCommitFilteredChanges,
       confirmCommitMessageOverride: this.props.confirmCommitMessageOverride,
+      confirmWorktreeRemoval: this.props.confirmWorktreeRemoval,
       uncommittedChangesStrategy: this.props.uncommittedChangesStrategy,
       availableShells,
       availableEditors,
@@ -324,6 +335,28 @@ export class Preferences extends React.Component<
       customShell: this.props.customShell ?? DefaultCustomIntegration,
       isLoadingGitConfig: false,
     })
+  }
+
+  public componentDidUpdate(prevProps: IPreferencesProps) {
+    if (
+      prevProps.selectedCopilotModelsByAccount !==
+      this.props.selectedCopilotModelsByAccount
+    ) {
+      this.setState({
+        selectedCopilotModelsByAccount:
+          this.props.selectedCopilotModelsByAccount,
+      })
+    }
+
+    if (
+      prevProps.alwaysUseCopilotForConflictResolution !==
+      this.props.alwaysUseCopilotForConflictResolution
+    ) {
+      this.setState({
+        alwaysUseCopilotForConflictResolution:
+          this.props.alwaysUseCopilotForConflictResolution,
+      })
+    }
   }
 
   private onCancel = () => {
@@ -345,8 +378,8 @@ export class Preferences extends React.Component<
         onDismissed={this.onCancel}
         onSubmit={this.onSave}
       >
+        {this.renderDisallowedCharactersError()}
         <div className="preferences-container">
-          {this.renderDisallowedCharactersError()}
           <TabBar
             onTabClicked={this.onTabClicked}
             selectedIndex={this.tabToVisualIndex(this.state.selectedIndex)}
@@ -446,6 +479,22 @@ export class Preferences extends React.Component<
     this.props.dispatcher.showEnterpriseSignInDialog()
   }
 
+  private onCopilotSignIn = () => {
+    this.setState({ selectedIndex: PreferencesTab.Accounts })
+  }
+
+  private onOpenCopilotPlans = () => {
+    this.props.dispatcher.openInBrowser(
+      'https://github.com/features/copilot/plans'
+    )
+  }
+
+  private onOpenCopilotFeatureSettings = () => {
+    this.props.dispatcher.openInBrowser(
+      'https://github.com/settings/copilot/features'
+    )
+  }
+
   private onLogout = (account: Account) => {
     this.props.dispatcher.removeAccount(account)
   }
@@ -516,15 +565,28 @@ export class Preferences extends React.Component<
       case PreferencesTab.Copilot:
         View = (
           <CopilotPreferences
-            selectedCopilotModels={this.state.selectedCopilotModels}
-            copilotModels={this.props.copilotModels}
-            copilotAvailable={this.props.copilotAvailable}
+            selectedCopilotModelsByAccount={
+              this.state.selectedCopilotModelsByAccount
+            }
+            copilotModelsByAccount={this.props.copilotModelsByAccount}
+            copilotQuotaSnapshotsByAccount={
+              this.props.copilotQuotaSnapshotsByAccount
+            }
+            accounts={this.props.accounts}
             byokProviders={this.props.byokProviders}
             showBYOKSettings={this.shouldShowBYOKSettings()}
+            onSignIn={this.onCopilotSignIn}
+            onOpenCopilotPlans={this.onOpenCopilotPlans}
+            onOpenCopilotFeatureSettings={this.onOpenCopilotFeatureSettings}
+            alwaysUseCopilotForConflictResolution={
+              this.state.alwaysUseCopilotForConflictResolution
+            }
             onSelectedCopilotModelChanged={this.onSelectedCopilotModelChanged}
-            onAddBYOKProvider={this.onAddBYOKProvider}
-            onEditBYOKProvider={this.onEditBYOKProvider}
-            onDeleteBYOKProvider={this.onDeleteBYOKProvider}
+            onAlwaysUseCopilotForConflictResolutionChanged={
+              this.onAlwaysUseCopilotForConflictResolutionChanged
+            }
+            onConfigureCustomProviders={this.onConfigureCustomProviders}
+            onConfigureModels={this.onConfigureCopilotModels}
           />
         )
         break
@@ -623,6 +685,7 @@ export class Preferences extends React.Component<
             confirmCommitMessageOverride={
               this.state.confirmCommitMessageOverride
             }
+            confirmWorktreeRemoval={this.state.confirmWorktreeRemoval}
             onConfirmRepositoryRemovalChanged={
               this.onConfirmRepositoryRemovalChanged
             }
@@ -639,6 +702,9 @@ export class Preferences extends React.Component<
             }
             onConfirmCommitMessageOverrideChanged={
               this.onConfirmCommitMessageOverrideChanged
+            }
+            onConfirmWorktreeRemovalChanged={
+              this.onConfirmWorktreeRemovalChanged
             }
             uncommittedChangesStrategy={this.state.uncommittedChangesStrategy}
             onUncommittedChangesStrategyChanged={
@@ -768,6 +834,10 @@ export class Preferences extends React.Component<
     this.setState({ confirmCommitMessageOverride: value })
   }
 
+  private onConfirmWorktreeRemovalChanged = (value: boolean) => {
+    this.setState({ confirmWorktreeRemoval: value })
+  }
+
   private onUncommittedChangesStrategyChanged = (
     uncommittedChangesStrategy: UncommittedChangesStrategy
   ) => {
@@ -846,43 +916,54 @@ export class Preferences extends React.Component<
   }
 
   private onSelectedCopilotModelChanged = (
+    account: Account,
     feature: CopilotFeature,
     model: string | null
   ) => {
     this.setState(state => {
-      const selections = { ...state.selectedCopilotModels }
+      const accountKey = getCopilotAccountCacheKey(account)
+      const selections = {
+        ...state.selectedCopilotModelsByAccount.get(accountKey),
+      }
       if (model === null) {
         delete selections[feature]
       } else {
         selections[feature] = model
       }
-      return { selectedCopilotModels: selections }
+
+      const selectedCopilotModelsByAccount = new Map(
+        state.selectedCopilotModelsByAccount
+      )
+      if (Object.keys(selections).length === 0) {
+        selectedCopilotModelsByAccount.delete(accountKey)
+      } else {
+        selectedCopilotModelsByAccount.set(accountKey, selections)
+      }
+
+      return { selectedCopilotModelsByAccount }
     })
+  }
+
+  private onAlwaysUseCopilotForConflictResolutionChanged = (
+    checked: boolean
+  ) => {
+    this.setState({ alwaysUseCopilotForConflictResolution: checked })
   }
 
   private shouldShowBYOKSettings(): boolean {
-    const account = this.props.accounts.find(isDotComAccount)
-    return account ? enableCopilotSdkCommitMessageGeneration(account) : false
+    return this.props.accounts.some(enableCopilotSdkCommitMessageGeneration)
   }
 
-  private onAddBYOKProvider = () => {
+  private onConfigureCustomProviders = () => {
     this.props.dispatcher.showPopup({
-      type: PopupType.EditCopilotBYOKProvider,
-      provider: null,
+      type: PopupType.CopilotCustomProviders,
     })
   }
 
-  private onEditBYOKProvider = (provider: IBYOKProvider) => {
+  private onConfigureCopilotModels = (account: Account) => {
     this.props.dispatcher.showPopup({
-      type: PopupType.EditCopilotBYOKProvider,
-      provider,
-    })
-  }
-
-  private onDeleteBYOKProvider = (provider: IBYOKProvider) => {
-    this.props.dispatcher.showPopup({
-      type: PopupType.ConfirmDeleteCopilotBYOKProvider,
-      provider,
+      type: PopupType.CopilotUserSettings,
+      account,
     })
   }
 
@@ -1030,6 +1111,9 @@ export class Preferences extends React.Component<
     await dispatcher.setConfirmCommitMessageOverrideSetting(
       this.state.confirmCommitMessageOverride
     )
+    await dispatcher.setConfirmWorktreeRemovalSetting(
+      this.state.confirmWorktreeRemoval
+    )
 
     if (this.state.selectedExternalEditor) {
       await dispatcher.setExternalEditor(this.state.selectedExternalEditor)
@@ -1050,7 +1134,13 @@ export class Preferences extends React.Component<
 
     dispatcher.setDiffCheckMarksSetting(this.state.showDiffCheckMarks)
 
-    dispatcher.setSelectedCopilotModels(this.state.selectedCopilotModels)
+    dispatcher.setSelectedCopilotModelsByAccount(
+      this.state.selectedCopilotModelsByAccount
+    )
+
+    dispatcher.setAlwaysUseCopilotForConflictResolution(
+      this.state.alwaysUseCopilotForConflictResolution
+    )
 
     if (enableFormattingPreferences()) {
       if (this.state.selectedDateFormat !== undefined) {
@@ -1078,9 +1168,7 @@ export class Preferences extends React.Component<
   }
 
   private get isCopilotSdkEnabled(): boolean {
-    return this.props.accounts
-      .filter(isDotComAccount)
-      .some(enableCopilotSdkCommitMessageGeneration)
+    return this.props.accounts.some(enableCopilotSdkCommitMessageGeneration)
   }
 
   private tabToVisualIndex(tab: PreferencesTab): number {

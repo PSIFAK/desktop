@@ -36,6 +36,7 @@ import {
   getBranches,
   getRebaseSnapshot,
   getRepositoryType,
+  listWorktrees,
 } from '../../lib/git'
 import { isGitOnPath } from '../../lib/is-git-on-path'
 import {
@@ -52,7 +53,7 @@ import { ILaunchStats, StatsStore } from '../../lib/stats'
 import { AppStore } from '../../lib/stores/app-store'
 import type {
   CopilotFeature,
-  CopilotModelSelections,
+  CopilotModelSelectionsByAccount,
 } from '../../lib/stores/copilot-store'
 import type { IBYOKProvider } from '../../lib/copilot/byok'
 import { RepositoryStateCache } from '../../lib/stores/repository-state-cache'
@@ -133,8 +134,9 @@ import { isAbsolute } from 'path'
 import { CLIAction } from '../../lib/cli-action'
 import { BypassReasonType } from '../secret-scanning/bypass-push-protection-dialog'
 import {
-  ICopilotConflictResolutionResponse,
   IConflictResolutionProgress,
+  IFileResolution,
+  ICopilotResolutionSummary,
 } from '../../lib/copilot-conflict-resolution'
 import { WorktreeEntry } from '../../models/worktree'
 
@@ -1031,6 +1033,28 @@ export class Dispatcher {
   }
 
   /**
+   * Rename (move) a worktree to a new path and keep the worktree list in sync.
+   * If the worktree being renamed is the currently selected one, the repository
+   * is switched to its new path.
+   *
+   * Returns a value indicating whether the rename succeeded. On failure the
+   * error is surfaced to the user via `postError`.
+   */
+  public async moveWorktree(
+    repository: Repository,
+    worktreePath: string,
+    newPath: string
+  ): Promise<boolean> {
+    return this.appStore
+      ._moveWorktree(repository, worktreePath, newPath)
+      .then(() => true)
+      .catch(e => {
+        this.postError(e)
+        return false
+      })
+  }
+
+  /**
    * Delete a worktree. If the worktree being deleted is the currently selected
    * one, the repository is switched to the main worktree first.
    */
@@ -1042,6 +1066,17 @@ export class Dispatcher {
     await this.appStore
       ._deleteWorktree(repository, worktreePath, force)
       .catch(e => this.postError(e))
+  }
+
+  /**
+   * Request deletion of a worktree, showing a confirmation dialog if the
+   * user's preferences require it.
+   */
+  public requestDeleteWorktree(
+    repository: Repository,
+    worktreePath: string
+  ): void {
+    this.appStore._requestDeleteWorktree(repository, worktreePath)
   }
 
   /**
@@ -1166,6 +1201,10 @@ export class Dispatcher {
     return this.appStore._generateCommitMessage(repository, filesSelected)
   }
 
+  public cancelGenerateCommitMessage(repository: Repository) {
+    return this.appStore._cancelGenerateCommitMessage(repository)
+  }
+
   /**
    * Use Copilot to analyze and suggest resolutions for conflicts
    * from merge, rebase, or cherry-pick operations.
@@ -1173,7 +1212,10 @@ export class Dispatcher {
   public resolveConflictsWithCopilot(
     repository: Repository,
     onProgress?: (progress: IConflictResolutionProgress) => void
-  ): Promise<ICopilotConflictResolutionResponse | null> {
+  ): Promise<{
+    readonly resolutions: ReadonlyArray<IFileResolution>
+    readonly summary: ICopilotResolutionSummary
+  } | null> {
     return this.appStore._resolveConflictsWithCopilot(repository, onProgress)
   }
 
@@ -1183,6 +1225,30 @@ export class Dispatcher {
    */
   public startCopilotConflictResolution(repository: Repository): Promise<void> {
     return this.appStore._startCopilotConflictResolution(repository)
+  }
+
+  /**
+   * Cancel the in-flight Copilot conflict resolution, tearing down the
+   * underlying SDK turn immediately rather than letting it run to completion.
+   */
+  public abortCopilotConflictResolution(repository: Repository): void {
+    return this.appStore._abortCopilotConflictResolution(repository)
+  }
+
+  /**
+   * User-facing entry point invoked from the manual conflicts dialog's
+   * "Resolve with Copilot" button. Handles account-availability check,
+   * first-click tracking, and the AI-tool disclaimer popup before
+   * transitioning to the loading interstitial.
+   */
+  public attemptCopilotConflictResolution(
+    repository: Repository
+  ): Promise<void> {
+    return this.appStore._attemptCopilotConflictResolution(repository)
+  }
+
+  public updateCopilotConflictResolutionDisclaimerLastSeen() {
+    return this.appStore._updateCopilotConflictResolutionDisclaimerLastSeen()
   }
 
   /**
@@ -2014,9 +2080,26 @@ export class Dispatcher {
 
       if (existingRepository) {
         await this.selectRepository(existingRepository)
-      } else {
-        await this.showPopup({ type: PopupType.AddRepository, path })
+        return
       }
+
+      // Try to locate a repository that has a shared main worktree with the
+      // provided path so that we can switch to the worktree instead of adding
+      // a new repository.
+      const worktrees = await listWorktrees(path).catch(e => {
+        log.error('Could not list worktrees', e)
+        return []
+      })
+      const worktree = matchExistingRepository(worktrees, path)
+      const sharedCommonDirRepository = repositories.find(
+        r => matchExistingRepository(worktrees, r.path) !== undefined
+      )
+      if (worktree && sharedCommonDirRepository instanceof Repository) {
+        await this.switchWorktree(sharedCommonDirRepository, worktree)
+        return
+      }
+
+      await this.showPopup({ type: PopupType.AddRepository, path })
     }
   }
 
@@ -2602,6 +2685,10 @@ export class Dispatcher {
 
   public setConfirmCommitMessageOverrideSetting(value: boolean) {
     return this.appStore._setConfirmCommitMessageOverrideSetting(value)
+  }
+
+  public setConfirmWorktreeRemovalSetting(value: boolean) {
+    return this.appStore._setConfirmWorktreeRemovalSetting(value)
   }
 
   /**
@@ -4213,20 +4300,32 @@ export class Dispatcher {
 
   /** Set the selected Copilot model for a specific feature. */
   public setSelectedCopilotModel(
+    account: Account,
     feature: CopilotFeature,
     model: string | null
   ) {
-    return this.appStore._setSelectedCopilotModel(feature, model)
+    return this.appStore._setSelectedCopilotModel(account, feature, model)
   }
 
-  /** Replace all per-feature Copilot model selections at once. */
-  public setSelectedCopilotModels(models: CopilotModelSelections) {
-    return this.appStore._setSelectedCopilotModels(models)
+  /** Replace all account-scoped Copilot model selections at once. */
+  public setSelectedCopilotModelsByAccount(
+    modelsByAccount: CopilotModelSelectionsByAccount
+  ) {
+    return this.appStore._setSelectedCopilotModelsByAccount(modelsByAccount)
+  }
+
+  public setAlwaysUseCopilotForConflictResolution(value: boolean): void {
+    this.appStore._setAlwaysUseCopilotForConflictResolution(value)
   }
 
   /** Fetch the list of available Copilot models from the SDK. */
   public fetchCopilotModels(): Promise<void> {
     return this.appStore._fetchCopilotModels()
+  }
+
+  /** Fetch Copilot quota usage snapshots from the SDK. */
+  public fetchCopilotQuotaSnapshots(): Promise<void> {
+    return this.appStore._fetchCopilotQuotaSnapshots()
   }
 
   /**

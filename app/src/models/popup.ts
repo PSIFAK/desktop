@@ -27,6 +27,7 @@ import { ISecretScanResult } from '../ui/secret-scanning/push-protection-error-d
 import { BypassReasonType } from '../ui/secret-scanning/bypass-push-protection-dialog'
 import { TerminalOutput, TerminalOutputListener } from '../lib/git'
 import type { IBYOKModel, IBYOKProvider } from '../lib/copilot/byok'
+import { WorktreeEntry } from './worktree'
 
 export enum PopupType {
   RenameBranch = 'RenameBranch',
@@ -103,10 +104,13 @@ export enum PopupType {
   TestIcons = 'TestIcons',
   ConfirmCommitFilteredChanges = 'ConfirmCommitFilteredChanges',
   TestAbout = 'TestAbout',
+  TestCLIAction = 'TestCLIAction',
+  TestCopilotSnapshotCard = 'TestCopilotSnapshotCard',
   PushProtectionError = 'PushProtectionError',
   BypassPushProtection = 'BypassPushProtection',
   GenerateCommitMessageOverrideWarning = 'GenerateCommitMessageOverrideWarning',
   GenerateCommitMessageDisclaimer = 'GenerateCommitMessageDisclaimer',
+  CopilotConflictResolutionDisclaimer = 'CopilotConflictResolutionDisclaimer',
   HookFailed = 'HookFailed',
   CommitProgress = 'CommitProgress',
   AddWorktree = 'AddWorktree',
@@ -114,7 +118,10 @@ export enum PopupType {
   DeleteWorktree = 'DeleteWorktree',
   EditCopilotBYOKProvider = 'EditCopilotBYOKProvider',
   EditCopilotBYOKModel = 'EditCopilotBYOKModel',
+  CopilotUserSettings = 'CopilotUserSettings',
+  CopilotCustomProviders = 'CopilotCustomProviders',
   ConfirmDeleteCopilotBYOKProvider = 'ConfirmDeleteCopilotBYOKProvider',
+  CopilotConflictResolutionAlwaysNudge = 'CopilotConflictResolutionAlwaysNudge',
   DeleteWorktreeFailed = 'DeleteWorktreeFailed',
 }
 
@@ -163,6 +170,11 @@ export type PopupDetail =
       otherModelIds: ReadonlyArray<string>
       onSave: (model: IBYOKModel) => void
     }
+  | {
+      type: PopupType.CopilotUserSettings
+      account: Account
+    }
+  | { type: PopupType.CopilotCustomProviders }
   | {
       type: PopupType.ConfirmDeleteCopilotBYOKProvider
       provider: IBYOKProvider
@@ -474,6 +486,12 @@ export type PopupDetail =
       type: PopupType.TestAbout
     }
   | {
+      type: PopupType.TestCLIAction
+    }
+  | {
+      type: PopupType.TestCopilotSnapshotCard
+    }
+  | {
       type: PopupType.PushProtectionError
       secrets: ReadonlyArray<ISecretScanResult>
     }
@@ -497,6 +515,14 @@ export type PopupDetail =
       // from this popup we will trigger the commit message generation too.
       repository: Repository
       filesSelected: ReadonlyArray<WorkingDirectoryFileChange>
+    }
+  | {
+      type: PopupType.CopilotConflictResolutionDisclaimer
+      repository: Repository
+    }
+  | {
+      type: PopupType.CopilotConflictResolutionAlwaysNudge
+      repository: Repository
     }
   | {
       type: PopupType.HookFailed
@@ -529,5 +555,6 @@ export type PopupDetail =
       repository: Repository
       worktreePath: string
       error: Error
+      originalWorktree: WorktreeEntry | null
     }
 export type Popup = IBasePopup & PopupDetail
